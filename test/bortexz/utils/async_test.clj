@@ -160,7 +160,7 @@
       (is (instance? clojure.lang.ExceptionInfo @v)))))
 
 (deftest tap-test
-  (testing "Passes core.async/mult tests"
+  (testing "Compatible with core.async tests"
     (let [a (a/chan 4)
           b (a/chan 4)
           src (a/chan)
@@ -171,23 +171,21 @@
       (is (= [0 1 2 3]
              (<t!! wait (a/into [] a))))
       (is (= [0 1 2 3]
-             (<t!! wait (a/into [] b)))))
-
-      ;; ASYNC-127
-    (let [ch (a/to-chan! [1 2 3])
+             (<t!! wait (a/into [] b))))))
+  
+  (testing "Waits before all taps have accepted before puting a new value"
+    (let [ch (a/chan 2)
           m (ua/mult ch)
           t-1 (a/chan)
-          t-2 (a/chan)
-          t-3 (a/chan)]
+          t-2 (a/chan)]
       (a/tap m t-1)
       (a/tap m t-2)
-      (a/tap m t-3)
-      (a/close! t-3)
+      (>t!! wait ch 1)
+      (>t!! wait ch 2)
       (is (= 1 (<t!! wait t-1)))
-      (is (= nil (a/poll! t-1)))
+      (is (= ::ua/timeout (<t!! wait t-1)))
       (is (= 1 (<t!! wait t-2)))
-      (is (= 2 (<t!! wait t-1)))
-      (is (= nil (a/poll! t-1)))))
+      (is (= 2 (<t!! wait t-1)))))
 
   (testing "events ch"
     (let [ch1 (a/chan 1)
