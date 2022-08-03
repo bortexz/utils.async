@@ -1,4 +1,5 @@
 # utils.async
+[![Clojars Project](https://img.shields.io/clojars/v/io.github.bortexz/utils.async.svg)](https://clojars.org/io.github.bortexz/utils.async) [![Cljdoc](https://cljdoc.org/badge/io.github.bortexz/utils.async)](https://cljdoc.org/d/io.github.bortexz/utils.async)
 
 Utilities for clojure.core.async
 
