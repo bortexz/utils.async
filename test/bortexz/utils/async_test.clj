@@ -308,3 +308,18 @@
       (a/close! ch1)
       (a/close! ch2)
       (is (= [[1 ch1] [2 ch2] [2 ch1]] (<t!! wait  (a/into [] out)))))))
+
+(deftest <?-test
+  (testing "parking"
+    (let [ch (a/chan 1)]
+      (a/put! ch (ex-info "Error" {}))
+      (is (= :error (a/<!! (a/go
+                             (try
+                               (ua/<? ch)
+                               (catch Exception _
+                                 :error))))))))
+  
+  (testing "blocking"
+    (let [ch (a/chan 1)]
+      (a/put! ch (ex-info "Error" {}))
+      (is (thrown? clojure.lang.ExceptionInfo (ua/<?? ch))))))

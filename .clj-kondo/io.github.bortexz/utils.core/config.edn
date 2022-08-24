@@ -1,0 +1,3 @@
+{:lint-as
+ {bortexz.utils.core/while-let better-cond.core/when-let
+  bortexz.utils.core/while-some better-cond.core/when-some}}

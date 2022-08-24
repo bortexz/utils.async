@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
         org.clojure/core.async {:mvn/version "1.5.648"}
-        io.github.bortexz/utils.core {:mvn/version "0.0.1"}}
+        io.github.bortexz/utils.core {:mvn/version "0.0.4"}}
  :aliases
  {:test
   {:extra-paths ["test"]

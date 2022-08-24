@@ -86,6 +86,20 @@
   [ms ch val]
   (a/alt!! [[ch val] (a/timeout ms)] ([v p] (if (= p ch) v ::timeout))))
 
+(defmacro <?
+  "Like <!, but will throw the exception if the value read from `ch` is an exception"
+  [ch]
+  `(let [v# (a/<! ~ch)]
+     (when (uc/exception? v#) (throw v#))
+     v#))
+
+(defn <??
+  "Like <!, but will throw the exception if the value read from `ch` is an exception"
+  [ch]
+  (let [v (a/<!! ch)]
+    (when (uc/exception? v) (throw v))
+    v))
+
 (defn bundle
   "Creates a process that adds items taken from input chan `in` into a `bundle` using `opts.add-item` fn. 
    The initial value of `bundle` can be specified with `opts.init`.
@@ -301,7 +315,7 @@
                          (a/put! events-ch :on-empty))))
 
          untap-chs (fn [chs]
-                     (uc/chain-fx! 
+                     (uc/chain-fx!
                       fx!__
                       (fn [_]
                         (do-events (swap-vals! chs_ #(reduce disj % chs)))
