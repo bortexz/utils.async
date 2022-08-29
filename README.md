@@ -3,7 +3,12 @@
 
 Utilities for clojure.core.async
 
-See the source code for available functions and docstrings.
+See [docs](https://cljdoc.org/d/io.github.bortexz/utils.async) for available functions and docstrings.
+
+See the [CHANGELOG](CHANGELOG.md) for (potentially breaking) changes. New MAJOR or MINOR version numbers might contain breaking changes. PATCH versions will NEVER contain breaking changes.
+
+## Credits
+- [core.async](https://github.com/clojure/core.async) as many functions from this library start off from core.async code
 
 ## License
 

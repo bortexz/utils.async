@@ -280,18 +280,8 @@
      - :on-fill Sent when the mult goes from having 0 taps to at least one tap.
      - :on-empty Sent when the mult goes from having at least one tap to 0 taps.
      - the ch will be closed when the mult process finishes.
-     
-     Events are ensured to be in same order of modification than the mult. 
-   
-     !Warning:
-     Events are put into `events-ch` ch using asynchronous `put!`, assuming the rate of events will be 
-     low enough to be consumed without needing backpressure. Not consuming/buffering `events-ch` ch 
-     can lead to 1024 pending puts! exception if that many events happen. 
-     This is a tradeoff in order to:
-      - not slow down/park the mult when emptied
-      - not block on tap/untap/untap-all operations 
-        (so they can still be used inside `go`, same as core.async equivalents)
-      - keep the internals simpler
+     An internal sliding-buffer is created that pipes to this channel, meaning that older events might get dropped in
+     favor of later events.
    
    - `finished-close?` If tapping into a finished mult with `close?` true, then it automatically
      closes the tap ch. Defaults to true. If set to false, same behaviour as core.async/mult
@@ -305,14 +295,16 @@
          closed?_ (atom false)
          fx!__ (atom nil)
 
+         sliding-events (a/chan (a/sliding-buffer 1))
+
          do-events (fn [[prev-chs new-chs]]
                      (when events-ch
                        (cond
                          (and (empty? prev-chs) (seq new-chs))
-                         (a/put! events-ch :on-fill)
+                         (a/put! sliding-events :on-fill)
 
                          (and (seq prev-chs) (empty? new-chs))
-                         (a/put! events-ch :on-empty))))
+                         (a/put! sliding-events :on-empty))))
 
          untap-chs (fn [chs]
                      (uc/chain-fx!
@@ -351,7 +343,7 @@
                        (fn [_]
                          (reset! closed?_ true)
                          (run! (fn [[ch close?]] (when close? (a/close! ch))) @ch->close?_)
-                         (when events-ch (a/close! events-ch)))))
+                         (a/close! sliding-events))))
 
          ;; broadcast
          dchan (a/chan 1)
@@ -359,6 +351,9 @@
          done (fn [_] (when (zero? (swap! dctr dec))
                         (a/put! dchan true)))
          untap (volatile! [])]
+     
+     (when events-ch (a/pipe sliding-events events-ch))
+
      (a/go-loop []
        (let [val (a/<! ch)]
          (if (nil? val)
@@ -388,8 +383,7 @@
      - [:on-fill <topic>] Sent when topic goes from having no subscribers to at least one subscriber.
      - [:on-empty <topic>] Sent when topic goes from having subscribers to not having any subscribers.
      - Will be closed when the pub has finished and all internal topic mults are finished.
-   
-   !! Refer to [[mult]] for caveats about the usage of `events-ch`.
+     Each topic uses a sliding-buffer of events, some events might get dropped in favor of a later status of the topic.
 
    - `finished-close?` See `finished-close?` in [[mult]]
    
