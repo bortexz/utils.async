@@ -100,6 +100,12 @@
     (when (uc/exception? v) (throw v))
     v))
 
+(defn put-close!
+  "Shortcut for (do (a/put! ch val) (a/close! ch))"
+  [ch val]
+  (a/put! ch val)
+  (a/close! ch))
+
 (defn bundle
   "Creates a process that adds items taken from input chan `in` into a `bundle` using `opts.add-item` fn. 
    The initial value of `bundle` can be specified with `opts.init`.
@@ -173,7 +179,7 @@
         dch    (a/chan 1)
         c      (atom (count chs))
         closed (atom [])
-        done   (fn [_#]
+        done   (fn [_]
                  (when (zero? (swap! c dec))
                    (a/put! dch @closed)
                    (a/close! dch)))]
@@ -251,12 +257,13 @@
 
 (defn- consume-thread
   [in f ex-handler]
-  (a/go-loop []
-    (when-let [v (a/<! in)]
-      (try
-        (let [res (f v)] (when (chan? res) (a/<! res)))
-        (catch Throwable t (ex-handler t)))
-      (recur))))
+  (a/thread
+    (loop []
+      (when-let [v (a/<!! in)]
+        (try
+          (let [res (f v)] (when (chan? res) (a/<!! res)))
+          (catch Throwable t (ex-handler t)))
+        (recur)))))
 
 (defn consume
   "Creates a process that takes items from `in` and executes `f` with each item.
@@ -443,64 +450,64 @@
              (recur)))))
      p)))
 
-(defn spread-pub
-  "Creates a new pub wrapping pub `p`. You can specify `opts.chan-fn` to create a source ch for a given topic, 
-   allowing you to specify a custom xf that will be applied only once for all subscribed chs of a given topic.
+(defn pub-layer
+  "Similar but more powerful than [[spread-pub]].
    
-   Additionally, this internal mult will sub automatically to the underlying `p` when there are 
-   any taps on a given topic, and will automatically unsub from `p` when there aren't taps on it. This is done
-   asynchronously, on an internal go-loop that reads from the events emitted by each [[mult]].
-   
-   Compatible with both core.async/pub and [[pub]]."
-  ([p] (spread-pub p {}))
-  ([p {:keys [chan-fn finished-close?] :or {chan-fn (fn [_topic] (a/chan))
-                                            finished-close? true}}]
-   (let [mults_ (atom {}) ; topic->mult
-         open_  (atom #{})
-         fx!__ (atom nil)
+   Creates a new pub that is not attached to any internal source or channel. `attach-fn` and `detach-fn` control 
+   how this pub is attached to it's underlying sources (can be other pubs, taps, ...). `src-fn` creates the sources 
+   to be attached/detached for each topic (could be a ch or more than one), and `mux-ch-fn` returns the 'output' chan 
+   for such topic. In simple cases, `mux-ch-fn` can return `src` if it's a single channel and no intermediary processes
+   are needed.
 
-         events-ch (a/chan 128)
+   Opts:
+   - `src-fn` 1-arity fn `(topic)` that creates the sources that will be attached/detached for such topic
+   - `attach-fn` 2-arity fn `(topic, src)` called when a topic is filled with subscribers to attach to underlying resources.
+   - `detach-fn` 2-arity fn `(topic, src)` called when a topic is emptied to detach from underlying resources.
+   - `mux-ch-fn` 2-arity fn `(topic, src)` that returns the mux ch to use on the internal mult. Used to setup any
+     intermediary async pipeline between `src` and the returned ch if needed. If no pipeline is needed, and src is a chan,
+     src can be used as mux-ch.
+   "
+  [{:keys [attach-fn detach-fn src-fn mux-ch-fn]}]
+  (let [mults_ (atom {})
+        srcs_  (atom {})
+        fx__!  (atom nil)
 
-         ensure-mult (fn [topic]
-                       (or (get @mults_ topic)
-                           (uc/chain-fx!
-                            fx!__
-                            (fn [_]
-                              (if-let [m (get @mults_ topic)]
-                                m
-                                (let [mch (chan-fn topic)
-                                      ech (a/chan 1 (map (fn [ev] [ev topic])))
-                                      m (mult mch {:events-ch ech :finished-close? finished-close?})]
-                                  (swap! open_ conj topic)
-                                  (a/go (a/<! (pipe-process ech events-ch false))
-                                        (when (empty? (swap! open_ disj topic))
-                                          (a/close! events-ch)))
-                                  (swap! mults_ assoc topic m)
-                                  m))))))]
+        events-ch (a/chan 128)
 
-     (a/go-loop []
-       (when-let [v (a/<! events-ch)]
-         (let [[ev t] v
-               ch (a/muxch* (get @mults_ t))]
-           (case ev
-             :on-fill (a/sub* p t ch true)
-             :on-empty (a/unsub* p t ch))
-           (recur))))
+        ensure-mult (fn [topic]
+                      (or (get @mults_ topic)
+                          (uc/chain-fx!
+                           fx__!
+                           (fn [_]
+                             (if-let [m (get @mults_ topic)]
+                               m
+                               (let [src    (src-fn topic)
+                                     mux-ch (mux-ch-fn topic src)
+                                     ech    (a/chan 1 (map (fn [ev] [ev topic])))
+                                     m      (mult mux-ch {:events-ch ech})]
+                                 (a/pipe ech events-ch false)
+                                 (swap! srcs_ assoc topic src)
+                                 (swap! mults_ assoc topic m)
+                                 m))))))
 
-     (reify
-       a/Mux
-       (muxch* [_] (a/muxch* pub))
-
-       a/Pub
-       (sub* [_ topic ch close?]
-         (let [m (ensure-mult topic)]
-           (a/tap* m ch close?)))
-       (unsub* [_ topic ch]
-         (when-let [m (get @mults_ topic)] (a/untap* m ch)))
-       (unsub-all* [_ topic]
-         (when-let [m (get @mults_ topic)] (a/untap-all* m)))
-       (unsub-all* [_]
-         (run! #(a/untap-all* %) (map a/muxch* (vals @mults_))))))))
+        _ps (a/go-loop []
+              (when-let [v (a/<! events-ch)]
+                (let [[ev topic] v]
+                  (case ev
+                    :on-fill (attach-fn topic (get @srcs_ topic))
+                    :on-empty (detach-fn topic (get @srcs_ topic)))
+                  (recur))))]
+    (reify
+      a/Pub
+      (sub* [_ topic ch close?]
+        (let [m (ensure-mult topic)]
+          (a/tap* m ch close?)))
+      (unsub* [_ topic ch]
+        (when-let [m (get @mults_ topic)] (a/untap* m ch)))
+      (unsub-all* [_ topic]
+        (when-let [m (get @mults_ topic)] (a/untap-all* m)))
+      (unsub-all* [_]
+        (run! #(a/untap-all* %) (map a/muxch* (vals @mults_)))))))
 
 (defn profile-buf
   "Wraps `buf` into a new buffer that works exactly like `buf` (calls protocol fns of wrapped buf), 
@@ -560,3 +567,67 @@
                     (dissoc q k)
                     (inc counter)))
            (when close? (a/close! out))))))))
+
+;;;; DEPRECATED
+
+(defn spread-pub
+  "DEPRECATED in favor of [[pub-layer]]
+   
+   Creates a new pub wrapping pub `p`. You can specify `opts.chan-fn` to create a source ch for a given topic, 
+   allowing you to specify a custom xf that will be applied only once for all subscribed chs of a given topic.
+   
+   Additionally, this internal mult will sub automatically to the underlying `p` when there are 
+   any taps on a given topic, and will automatically unsub from `p` when there aren't taps on it. This is done
+   asynchronously, on an internal go-loop that reads from the events emitted by each [[mult]].
+   
+   Compatible with both core.async/pub and [[pub]]."
+  {:deprecated true}
+  ([p] (spread-pub p {}))
+  ([p {:keys [chan-fn finished-close?] :or {chan-fn (fn [_topic] (a/chan))
+                                            finished-close? true}}]
+   (let [mults_ (atom {}) ; topic->mult
+         open_  (atom #{})
+         fx!__ (atom nil)
+
+         events-ch (a/chan 128)
+
+         ensure-mult (fn [topic]
+                       (or (get @mults_ topic)
+                           (uc/chain-fx!
+                            fx!__
+                            (fn [_]
+                              (if-let [m (get @mults_ topic)]
+                                m
+                                (let [mch (chan-fn topic)
+                                      ech (a/chan 1 (map (fn [ev] [ev topic])))
+                                      m (mult mch {:events-ch ech :finished-close? finished-close?})]
+                                  (swap! open_ conj topic)
+                                  (a/go (a/<! (pipe-process ech events-ch false))
+                                        (when (empty? (swap! open_ disj topic))
+                                          (a/close! events-ch)))
+                                  (swap! mults_ assoc topic m)
+                                  m))))))]
+
+     (a/go-loop []
+       (when-let [v (a/<! events-ch)]
+         (let [[ev t] v
+               ch (a/muxch* (get @mults_ t))]
+           (case ev
+             :on-fill (a/sub* p t ch true)
+             :on-empty (a/unsub* p t ch))
+           (recur))))
+
+     (reify
+       a/Mux
+       (muxch* [_] (a/muxch* pub))
+
+       a/Pub
+       (sub* [_ topic ch close?]
+         (let [m (ensure-mult topic)]
+           (a/tap* m ch close?)))
+       (unsub* [_ topic ch]
+         (when-let [m (get @mults_ topic)] (a/untap* m ch)))
+       (unsub-all* [_ topic]
+         (when-let [m (get @mults_ topic)] (a/untap-all* m)))
+       (unsub-all* [_]
+         (run! #(a/untap-all* %) (map a/muxch* (vals @mults_))))))))

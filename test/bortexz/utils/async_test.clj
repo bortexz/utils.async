@@ -260,19 +260,22 @@
       (is (= [:on-empty :topic] (<t!! wait ev)))
       (is (nil? (<t!! wait ev))))))
 
-(deftest spread-pub-test
-  (testing "spread-pub-test works"
-    (let [src-ch (a/chan)
-          ech (a/chan 3)
-          internal-pub (ua/pub src-ch first {:events-ch ech})
-          spub (ua/spread-pub internal-pub)
-          sub-ch (a/chan)]
-      (a/sub spub :topic-a sub-ch)
-      (is (= [:on-fill :topic-a] (<t!! wait ech)))
-      (>t!! wait src-ch [:topic-a 1])
-      (is (= [:topic-a 1] (<t!! wait sub-ch)))
-      (a/unsub spub :topic-a sub-ch)
-      (is (= [:on-empty :topic-a] (<t!! wait ech))))))
+(deftest pub-layer-test
+  (testing "pub-layer-test"
+    (let [state_ (atom {})
+          p      (ua/pub-layer
+                  {:src-fn    (fn [_t] (a/chan 1))
+                   :mux-ch-fn (fn [_t src] src)
+                   :attach-fn (fn [t src] (swap! state_ assoc t src))
+                   :detach-fn (fn [t src] (swap! state_ dissoc t src))})
+          ch     (a/chan 1)]
+      (a/sub p :topic1 ch)
+      (a/<!! (a/timeout wait))
+      (a/put! (get @state_ :topic1) true)
+      (is (true? (<t!! wait ch)))
+      (a/unsub p :topic1 ch)
+      (a/<!! (a/timeout wait))
+      (is (nil? (get @state_ :topic1))))))
 
 (deftest profile-buf-test
   (testing "Returns remaining number of items in buf"
@@ -323,3 +326,20 @@
     (let [ch (a/chan 1)]
       (a/put! ch (ex-info "Error" {}))
       (is (thrown? clojure.lang.ExceptionInfo (ua/<?? ch))))))
+
+
+;; DEPRECATED
+
+(deftest spread-pub-test
+  (testing "spread-pub-test works"
+    (let [src-ch (a/chan)
+          ech (a/chan 3)
+          internal-pub (ua/pub src-ch first {:events-ch ech})
+          spub (ua/spread-pub internal-pub)
+          sub-ch (a/chan)]
+      (a/sub spub :topic-a sub-ch)
+      (is (= [:on-fill :topic-a] (<t!! wait ech)))
+      (>t!! wait src-ch [:topic-a 1])
+      (is (= [:topic-a 1] (<t!! wait sub-ch)))
+      (a/unsub spub :topic-a sub-ch)
+      (is (= [:on-empty :topic-a] (<t!! wait ech))))))
