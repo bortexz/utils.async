@@ -258,6 +258,13 @@
       (a/unsub p :topic ch1)
       (a/close! src)
       (is (= [:on-empty :topic] (<t!! wait ev)))
+      (is (nil? (<t!! wait ev)))))
+  
+  (testing "if no topics subscribed, events-ch closes correctly"
+    (let [ev (a/chan 1)
+          src (a/chan)
+          p (ua/pub src first {:events-ch ev})]
+      (a/close! src)
       (is (nil? (<t!! wait ev))))))
 
 (deftest pub-layer-test

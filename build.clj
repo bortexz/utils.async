@@ -3,7 +3,7 @@
   (:require [org.corfield.build :as bb]))
 
 (def lib 'io.github.bortexz/utils.async)
-(def version "0.2.0")
+(def version "0.3.0")
 
 (defn- gha-output
   [k v]

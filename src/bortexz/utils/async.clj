@@ -443,7 +443,10 @@
      (a/go-loop []
        (let [val (a/<! ch)]
          (if (nil? val)
-           (run! #(a/close! %) (map a/muxch* (vals @mults_)))
+           (let [mults (vals @mults_)]
+             (if (empty? mults)
+               (when events-ch (a/close! events-ch))
+               (run! #(a/close! %) (map a/muxch* mults))))
            (let [topic (topic-fn val)
                  m (get @mults_ topic)]
              (when m (a/>! (a/muxch* m) val))
