@@ -279,6 +279,12 @@
      (consume-thread in f ex-handler)
      (consume-go in f ex-handler))))
 
+
+(defn- consumers
+  "Creates n consumers that execute `consume`. opts same as consume. Returns chan that will be closed when all workers finished"
+  [n in f opts]
+  (a/merge (mapv (fn [_] (consume in f opts)) (range n))))
+
 (defn mult
   "Alternative implementation of core.async/mult with extra `opts`.
    
